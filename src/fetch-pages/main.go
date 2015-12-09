@@ -8,12 +8,22 @@ import (
 	"os"
 
 	"pagecache"
+	"strings"
 )
 
 func fetch(uri string) ([]byte, error) {
 	resp, err := http.Get(uri)
 	if err != nil {
 		return nil, err
+	}
+	contentTypes := resp.Header["Content-Type"]
+	if len(contentTypes) < 1 {
+		return nil, fmt.Errorf("Unknown content type for URL %s", uri)
+	}
+	parts := strings.Split(contentTypes[0], ";")
+	contentType := strings.TrimSpace(parts[0])
+	if contentType != "text/html" {
+		return nil, fmt.Errorf("Unsupported content type \"%s\"", contentType)
 	}
 	if resp.StatusCode != 200 {
 		return nil, fmt.Errorf("request failed with status %d", resp.StatusCode)
