@@ -9,10 +9,14 @@ import (
 
 	"pagecache"
 	"strings"
+	"time"
 )
 
 func fetch(uri string) ([]byte, error) {
-	resp, err := http.Get(uri)
+	client := http.Client{
+		Timeout: 10 * time.Second,
+	}
+	resp, err := client.Get(uri)
 	if err != nil {
 		return nil, err
 	}
