@@ -7,21 +7,15 @@ import (
 	"fmt"
 	"golang.org/x/net/html"
 	"os"
-	"net/url"
 
 	"pagecache"
-
-	"strconv"
 )
 
 type Link struct {
 	Tag string
+	Rel string
 	Href string
-}
-
-type PageLinks struct {
-	URL string
-	Links []Link
+	Type string
 }
 
 func extractLinks(content string) ([]Link, error) {
@@ -32,15 +26,29 @@ func extractLinks(content string) ([]Link, error) {
 		switch tt {
 		case html.ErrorToken:
 			return links, nil
+		case html.SelfClosingTagToken:
+			fallthrough
 		case html.StartTagToken:
 			tok := tokenizer.Token()
+			linkHref := ""
+			linkRel := ""
+			linkType := ""
 			for _, attr := range tok.Attr {
 				if attr.Key == "src" || attr.Key == "href" {
-					links = append(links, Link{
-						Tag: tok.Data,
-						Href: attr.Val,
-					})
+					linkHref = attr.Val
+				} else if attr.Key == "rel" {
+					linkRel = attr.Val
+				} else if attr.Key == "type" {
+					linkType = attr.Val
 				}
+			}
+			if linkHref != "" {
+				links = append(links, Link{
+					Tag: tok.Data,
+					Href: linkHref,
+					Rel: linkRel,
+					Type: linkType,
+				})
 			}
 		}
 	}
@@ -57,7 +65,13 @@ func main() {
 	cache := pagecache.Cache{Dir: ".pagecache"}
 
 	csvWriter := csv.NewWriter(os.Stdout)
-	csvWriter.Write([]string{"Annotated URI", "Total Links", "Absolute", "Absolute (Same Host)", "Relative"})
+	csvWriter.Write([]string{
+		"Annotated URI",
+		"Link Tag",
+		"Link Rel",
+		"Type",
+		"Dest",
+	})
 
 	for _, uri := range uris {
 		content, err := cache.Read(uri)
@@ -66,43 +80,28 @@ func main() {
 			continue
 		}
 
-		parsedUri, err := url.Parse(uri)
+		links, err := extractLinks(string(content))
 		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to extract links from %s\n", uri, err)
 			continue
 		}
-
-		absUrls := 0
-		relUrls := 0
-		sameHostAbsUrls := 0
-
-		links, err := extractLinks(string(content))
 		for _, link := range links {
-			url, err := url.Parse(link.Href)
-			if err != nil {
-				continue
+			linkDest := link.Href
+			if link.Tag == "link" &&
+			   link.Rel == "canonical" &&
+			   len(linkDest) > 2 && linkDest[0] == '/' && linkDest[1] != '/' {
+				// The ordering of fields here needs to be kept in sync
+				// with the CSV headers (see above)
+				csvWriter.Write([]string{
+					uri,
+					link.Tag,
+					link.Rel,
+					link.Type,
+					linkDest,
+				})
 			}
-			if url.IsAbs() {
-				absUrls += 1
-				if url.Host == parsedUri.Host {
-					sameHostAbsUrls += 1
-				}
-			} else {
-				relUrls += 1
-			}
-		}
-
-		totalUris := absUrls + relUrls
-		err = csvWriter.Write([]string{
-			uri,
-			strconv.Itoa(totalUris),
-			strconv.Itoa(absUrls),
-			strconv.Itoa(sameHostAbsUrls),
-			strconv.Itoa(relUrls),
-		})
-		csvWriter.Flush()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "%v\n", err)
 		}
 	}
+	csvWriter.Flush()
 }
 
